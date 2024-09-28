@@ -35,6 +35,7 @@
 #include <EEPROM.h>
 #include <OneWire.h>
 #include <SPI.h>
+#include <elapsedMillis.h>
 
 // Version Definitions
 static const PROGMEM float hw = 0.9;
@@ -82,6 +83,7 @@ float bed_resistance = 1.88;
 #define ANALOG_APPROXIMATION_OFFSET -20.517
 
 // EEPROM storage locations
+#define STORAGE_VER 1
 #define CRC_ADDR 0
 #define FIRSTTIME_BOOT_ADDR 4
 #define TEMP_INDEX_ADDR 5
@@ -173,8 +175,6 @@ float error_I = 0;
 // Optional temperature sensor
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
-int sensor_count = 0;
-DeviceAddress temp_addresses[3];
 
 #define DEBUG
 
@@ -281,12 +281,8 @@ uint32_t eepromCRC(void) {
 
 inline void setupSensors() {
     sensors.begin();
-    sensor_count = sensors.getDeviceCount();
     debugprint("Looking for sensors, found: ");
-    debugprintln(sensor_count);
-    for (int i = 0; i < min(sensor_count, sizeof(temp_addresses)); i++) {
-        sensors.getAddress(temp_addresses[i], i);
-    }
+    debugprintln(sensors.getDeviceCount());
 }
 
 inline void setFastPwm() { analogWriteFrequency(64); }
@@ -297,11 +293,11 @@ inline bool isFirstBoot() {
     uint8_t first_boot = EEPROM.read(FIRSTTIME_BOOT_ADDR);
     debugprint("Got first boot flag: ");
     debugprintln(first_boot);
-    return first_boot != 1;
+    return first_boot != STORAGE_VER;
 }
 
 inline void setFirstBoot() {
-    EEPROM.write(FIRSTTIME_BOOT_ADDR, 1);
+    EEPROM.write(FIRSTTIME_BOOT_ADDR, STORAGE_VER);
     updateCRC();
 }
 
@@ -326,7 +322,7 @@ inline int getMaxTempIndex(void) { return EEPROM.read(TEMP_INDEX_ADDR) % sizeof(
 void showLogo() {
     unsigned long start_time = millis();
     display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS);
-    while (start_time + 2000 > millis()) {
+    while (start_time + 5000 > millis()) {
         display.clearDisplay();
         display.setTextSize(1);
         display.setTextColor(SSD1306_WHITE);
@@ -342,6 +338,9 @@ void showLogo() {
         buttons_state_t cur_button = getButtonsState();
         // If we press both buttons during boot, we'll enter the setup process
         if (cur_button == BUTTONS_BOTH_PRESS) {
+          if (!isFirstBoot) {
+            bed_resistance = getResistance();
+          }
             doSetup();
             return;
         }
@@ -359,8 +358,9 @@ inline void doSetup() {
 }
 
 inline void getResistanceFromUser() {
-    float resistance = 1.88;
-    while (1) {
+    float resistance = bed_resistance;
+
+    for (;;) {
         clearMainMenu();
         display.setCursor(3, 4);
         display.print(F("Resistance"));
@@ -394,7 +394,9 @@ inline void mainMenu() {
     int y = 200; // Display change max (modulused below)
     uint8_t profile_index = 0;
 
-    while (1) {
+    coolDown();
+
+    for (;;) {
         switch (cur_state) {
         case MENU_IDLE: {
             clearMainMenu();
@@ -493,7 +495,7 @@ buttons_state_t getButtonsState() {
 
 inline uint8_t getProfile() {
     uint8_t cur_profile = 0;
-    while (1) {
+    for (;;) {
         clearMainMenu();
         display.setCursor(3, 4);
         display.print(F("Pick profile"));
@@ -605,7 +607,7 @@ bool heat(byte max_temp, int profile_index) {
     float last_temp = getTemp();
     error_I = 0;
 
-    while (1) {
+    for (;;) {
         // Cancel heat, don't even wait for uppress so we don't risk missing it during the loop
         if (getButtonsState() != BUTTONS_NO_PRESS) {
             analogWrite(MOSFET_PIN, MOSFET_PIN_OFF);
@@ -633,6 +635,7 @@ bool heat(byte max_temp, int profile_index) {
         min_PWM = constrain(min_PWM, 0, 255);
         debugprint("Min PWM: ");
         debugprintln(min_PWM);
+        debugprint("Bed resistance: ");
         debugprintln(bed_resistance);
 
         // Determine what target temp is and PID to it
@@ -706,6 +709,30 @@ void stepPID(float target_temp, float current_temp, float last_temp, float dt, i
     float PWM = 255.0 - (error * kP + D * kD + error_I);
     PWM = constrain(PWM, min_pwm, 255);
 
+    /* Manage maximum current based upon voltage drop readings /*
+    static float maxVolts(0);
+    static uint8_t constraint(0);
+    static elapsedMillis last;
+
+    float Volts(getVolts());
+    float minVolts(MAX_AMPERAGE * bed_resistance);
+
+    if (last >= 100) {
+      if (last > (5 * 60 * 1000)) {
+        maxVolts = 0;
+      }
+      maxVolts = max(maxVolts, Volts);
+      if (Volts < minVolts + 1) {
+        constraint++;
+      } else if (Volts + 1 >= maxVolts) {
+        constraint--;
+      }
+    last = 0;
+    }
+  
+    PWM = constrain(PWM, constraint, 255);
+    /* End of current management */
+    
     debugprintln("PID");
     debugprintln(dt);
     debugprintln(error);
@@ -876,17 +903,23 @@ float getTemp() {
     // this simple function estimates the true bed temperature based off the thermal
     // gradient 
     float estimated_temp = t*ANALOG_APPROXIMATION_SCALAR + ANALOG_APPROXIMATION_OFFSET;
+    debugprint("True: ");
+    debugprint(t);
+    debugprint(" Estimated ");
     debugprint(estimated_temp);
-    debugprint(" ");
 
-    sensors.requestTemperatures();
-    for (int i = 0; i < sensor_count; i++) {
-        float temp_in = sensors.getTempC(temp_addresses[i]);
-        debugprint(temp_in);
-        debugprint(" ");
+    if (sensors.getDeviceCount()) {
+      sensors.requestTemperatures();
+      for (int i = 0; i < sensors.getDeviceCount(); i++) {
+        float temp_in = sensors.getTempCByIndex(i);
+        if (temp_in != DEVICE_DISCONNECTED_C) {
+          debugprint(" ");
+          debugprint(temp_in);
+          debugprint(" ");
+        }
+      }
     }
     debugprintln();
-
 
     return max(t, estimated_temp);
 }
