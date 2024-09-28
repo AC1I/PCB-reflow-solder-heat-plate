@@ -709,7 +709,7 @@ void stepPID(float target_temp, float current_temp, float last_temp, float dt, i
     float PWM = 255.0 - (error * kP + D * kD + error_I);
     PWM = constrain(PWM, min_pwm, 255);
 
-    /* Manage maximum current based upon voltage drop readings /*
+    /* Manage maximum current based upon voltage drop readings */
     static float maxVolts(0);
     static uint8_t constraint(0);
     static elapsedMillis last;
@@ -732,7 +732,7 @@ void stepPID(float target_temp, float current_temp, float last_temp, float dt, i
   
     PWM = constrain(PWM, constraint, 255);
     /* End of current management */
-    
+
     debugprintln("PID");
     debugprintln(dt);
     debugprintln(error);
