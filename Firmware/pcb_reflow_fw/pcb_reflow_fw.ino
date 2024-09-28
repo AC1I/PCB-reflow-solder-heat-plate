@@ -307,7 +307,7 @@ inline void setFirstBoot() {
 
 inline float getResistance() {
     float f;
-    return EEPROM.get(RESISTANCE_INDEX_ADDR, f);
+    EEPROM.get(RESISTANCE_INDEX_ADDR, f);
     return f;
 }
 
