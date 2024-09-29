@@ -4,23 +4,22 @@
  *  by Chris Halsall and Nathan Heidt     */
 
 /* To prepare
- * 1) Install MiniCore in additional boards; (copy into File->Preferences->Additional Boards Manager
- * URLs) https://mcudude.github.io/MiniCore/package_MCUdude_MiniCore_index.json 2) Then add MiniCore
- * by searching and installing (Tools->Board->Board Manager) 3) Install Adafruit_GFX and
- * Adafruit_SSD1306 libraries (Tools->Manage Libraries)
+ * 1) Add the MegaCoreX hardware package to the Ardunio IDE (see https://github.com/MCUdude/MegaCoreX#how-to-install)
+ * 2) Install the Adafruit_GFX, Adafruit_SSD1306, DallasTemperature, OneWire and elapsedmillis libraries
  */
 
 /* To program
  *  1) Select the following settings under (Tools)
- *      Board->Minicore->Atmega328
- *      Clock->Internal 8MHz
- *      BOD->BOD 2.7V
+ *      Board->MegacoreX->Atmega4809
+ *      Clock->Internal 16 MHz
+ *      BOD->BOD 2.6V
  *      EEPROM->EEPROM retained
- *      Compiler LTO->LTO Disabled
- *      Variant->328P / 328PA
+ *      Pinout->48 pin standard
+ *      Reset Pin->Reset
  *      Bootloader->No bootloader
- *  2) Set programmer of choice, e.g.'Arduino as ISP (MiniCore)', 'USB ASP', etc, and set correct
- * port. 3) Burn bootloader (to set fuses correctly) 4) Compile and upload
+ *  2) Set programmer of choice, e.g. Serial UPDI (230400 baud)
+ *  3) Burn bootloader (to set fuses correctly) (Only necessary with unprogramed chip)
+ *  4) Compile and upload
  *
  *
  * TODOS:
@@ -77,18 +76,21 @@ float bed_resistance = 1.88;
 #define MAX_AMPERAGE 5.0
 #define PWM_VOLTAGE_SCALAR 2.0
 
+uint8_t uPWMConstraint(2);
+
 // These values were derived using a regression from real world data.
 // See the jupyter notebooks for more detail
 #define ANALOG_APPROXIMATION_SCALAR 1.612
 #define ANALOG_APPROXIMATION_OFFSET -20.517
 
 // EEPROM storage locations
-#define STORAGE_VER 1
+#define STORAGE_VER 2
 #define CRC_ADDR 0
 #define FIRSTTIME_BOOT_ADDR 4
 #define TEMP_INDEX_ADDR 5
 #define RESISTANCE_INDEX_ADDR 6
-#define DIGITAL_TEMP_ID_ADDR 10
+#define PWM_MAX_ADDR 10
+#define DIGITAL_TEMP_ID_ADDR 11
 
 // Voltage Measurement Info
 #define VOLTAGE_REFERENCE 1.5
@@ -239,8 +241,9 @@ void setup() {
     // Pull saved values from EEPROM
     max_temp_index = getMaxTempIndex();
     bed_resistance = getResistance();
+    uPWMConstraint = getMaxPWM();
 
-    debugprintln("Entering main menu");
+   debugprintln("Entering main menu");
     // Go to main menu
     mainMenu();
 }
@@ -312,6 +315,14 @@ inline void setResistance(float resistance) {
     updateCRC();
 }
 
+void setMaxPWM(uint8_t uConstrait) {
+  EEPROM.write(PWM_MAX_ADDR, uConstrait);
+  updateCRC();
+}
+uint8_t getMaxPWM(void) {
+  return EEPROM.read(PWM_MAX_ADDR);
+}
+
 inline void setMaxTempIndex(int index) {
     EEPROM.update(TEMP_INDEX_ADDR, index);
     updateCRC();
@@ -338,8 +349,10 @@ void showLogo() {
         buttons_state_t cur_button = getButtonsState();
         // If we press both buttons during boot, we'll enter the setup process
         if (cur_button == BUTTONS_BOTH_PRESS) {
-          if (!isFirstBoot) {
+          if (!isFirstBoot() && validateCRC()) {
+            max_temp_index = getMaxTempIndex();
             bed_resistance = getResistance();
+            uPWMConstraint = getMaxPWM();
           }
             doSetup();
             return;
@@ -352,6 +365,7 @@ inline void doSetup() {
     // TODO(HEIDT) show an info screen if we're doing firstime setup or if memory is corrupted
 
     getResistanceFromUser();
+    getPWMMaxFromUser();
     // TODO(HEIDT) do a temperature module setup here
 
     setFirstBoot();
@@ -386,6 +400,34 @@ inline void getResistanceFromUser() {
     }
 }
 
+void getPWMMaxFromUser() {
+    uint8_t Constraint(uPWMConstraint);
+
+    for (;;) {
+        clearMainMenu();
+        display.setCursor(3, 4);
+        display.print(F("Max PWM"));
+        display.drawLine(3, 12, 79, 12, SSD1306_WHITE);
+        display.setCursor(3, 14);
+        display.print(F("UP/DN: change"));
+        display.setCursor(3, 22);
+        display.print(F("BOTH: choose"));
+        buttons_state_t button = getButtonsState();
+        if (button == BUTTONS_UP_PRESS) {
+            Constraint += 1;
+        } else if (button == BUTTONS_DN_PRESS) {
+            Constraint -= 1;
+        } else if (button == BUTTONS_BOTH_PRESS) {
+            setMaxPWM(constrain(Constraint, 0, 255));
+            return;
+        }
+        Constraint = constrain(Constraint, 0, 255);
+
+        display.setCursor(90, 12);
+        display.print(Constraint);
+        display.display();
+    }
+}
 inline void mainMenu() {
     // Debounce
     menu_state_t cur_state = MENU_IDLE;
@@ -630,13 +672,24 @@ bool heat(byte max_temp, int profile_index) {
         v = getVolts();
         float max_possible_amperage = v / bed_resistance;
         // TODO(HEIDT) approximate true resistance based on cold resistance and temperature
+        debugprint("Bed resistance: ");
+#if !defined HAVE_ACCURATE_TEMPERATURE_MEASUREMENT
         float vmax = (MAX_AMPERAGE * bed_resistance) * PWM_VOLTAGE_SCALAR;
         int min_PWM = 255 - ((vmax * 255.0) / v);
-        min_PWM = constrain(min_PWM, 0, 255);
+        debugprintln(bed_resistance);
+#else
+        constexpr float TargetCurrent(4.75);
+        constexpr float ResistanceDegreeScalar(1.63 / (180 - 20)); // Bed resistance increase per degree from 20C to 180C
+        const float fNormalizedTemp(t - 20);
+        const float fBedResistance(bed_resistance + (fNormalizedTemp * ResistanceDegreeScalar)); // adjusted bed resistance
+        int min_PWM(255 - (255.0 * (1 / ((v / fBedResistance) / TargetCurrent))));
+        debugprintln(fBedResistance);
+        debugprint(" PWM calculated ");
+        debugprint(min_PWM);
+#endif
+        min_PWM = constrain(min_PWM, uPWMConstraint, 255);
         debugprint("Min PWM: ");
         debugprintln(min_PWM);
-        debugprint("Bed resistance: ");
-        debugprintln(bed_resistance);
 
         // Determine what target temp is and PID to it
         float time_into_step = ((float)millis() / 1000.0) - (float)step_start_time;
@@ -710,6 +763,7 @@ void stepPID(float target_temp, float current_temp, float last_temp, float dt, i
     PWM = constrain(PWM, min_pwm, 255);
 
     /* Manage maximum current based upon voltage drop readings */
+#if defined HAVE_CONSTANT_CURRENT_PS
     static float maxVolts(0);
     static uint8_t constraint(0);
     static elapsedMillis last;
@@ -731,11 +785,14 @@ void stepPID(float target_temp, float current_temp, float last_temp, float dt, i
     }
   
     PWM = constrain(PWM, constraint, 255);
+#endif
     /* End of current management */
 
-    debugprintln("PID");
-    debugprintln(dt);
-    debugprintln(error);
+    debugprint("PID ");
+    debugprint(dt);
+    debugprint(" Error ");
+    debugprint(error);
+    debugprint(" Error I ");
     debugprintln(error_I);
     debugprint("PWM: ");
     debugprintln(PWM);
