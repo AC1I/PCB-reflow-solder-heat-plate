@@ -178,7 +178,7 @@ float error_I = 0;
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 
-#define DEBUG
+//#define DEBUG
 
 #ifdef DEBUG
 #define debugprint(x) Serial.print(x);
@@ -763,29 +763,29 @@ void stepPID(float target_temp, float current_temp, float last_temp, float dt, i
     PWM = constrain(PWM, min_pwm, 255);
 
     /* Manage maximum current based upon voltage drop readings */
-#if defined HAVE_CONSTANT_CURRENT_PS
-    static float maxVolts(0);
-    static uint8_t constraint(0);
-    static elapsedMillis last;
+    if (uPWMConstraint == 0 ) {
+      static float maxVolts(0);
+      static uint8_t constraint(0);
+      static elapsedMillis last;
 
-    float Volts(getVolts());
-    float minVolts(MAX_AMPERAGE * bed_resistance);
+      float Volts(getVolts());
+      float minVolts(MAX_AMPERAGE * bed_resistance);
 
-    if (last >= 100) {
-      if (last > (5 * 60 * 1000)) {
-        maxVolts = 0;
+      if (last >= 100) {
+        if (last > (5 * 60 * 1000)) {
+          maxVolts = 0;
+        }
+        maxVolts = max(maxVolts, Volts);
+        if (Volts < minVolts + 1) {
+          constraint++;
+        } else if (Volts + 1 >= maxVolts) {
+          constraint--;
+        }
+      last = 0;
       }
-      maxVolts = max(maxVolts, Volts);
-      if (Volts < minVolts + 1) {
-        constraint++;
-      } else if (Volts + 1 >= maxVolts) {
-        constraint--;
-      }
-    last = 0;
+    
+      PWM = constrain(PWM, constraint, 255);
     }
-  
-    PWM = constrain(PWM, constraint, 255);
-#endif
     /* End of current management */
 
     debugprint("PID ");
