@@ -27,3 +27,7 @@ fp-info-cache
 
 # ipynb checkpoints
 .ipynb_checkpoints
+
+# Fritzing Project Files
+*.fzz
+
