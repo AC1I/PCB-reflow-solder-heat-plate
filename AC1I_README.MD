@@ -5,13 +5,18 @@
 I purchaced a manufactured unit off Tindie, powered it up, and promptly blew the internal fuse. 
 The vendors reply was to the effect "Your power supply is too powerful, you need to purchace a 
 power supply with a maximum output current of less than the rating of the fuse, then the fuse will stop blowing".
-Since this is effectively the same as shorting out the output of the power supply, I looked for a better answer. 
+Since this is effectively the same as moving the overcurrent from the heat plate to the power supply, I looked for a better answer. 
 What follows is my work around.
+
+### Other Issues
+My solder plate blew the IRLR8726TRPBF MOSFET shortly after arrival. This was most likely due to a cold solder 
+joint on the source pin. I can see this happening as this component is a big heat sink and may not have been 
+heated adequately during assembly. I would recommend that you reheat this components connections prior to use.
 
 ### Feature list
 
 - User configurable maximum duty cycle (to limit the maximum current consumption).
-- Improved temperature calculation based upon LMT85 data sheet.
+- Improved temperature calculation based upon LMT85 data sheet (Still slugish)
 - Enhanced debugging interface via the serial debugging interface supplied with the board.
 - Support for additional digital sensors for temperature calibration.
 - Use of the dual color LED (green = power, orange = heating, red = hot)
@@ -38,7 +43,7 @@ voltage drop, indicating the current is being limited by the supply and will aut
 prevent overloading the supply and tripping the fuse. This will work with constant current power supplies and should work 
 if you use the vendor recommended undersized power supply. If you have an ammeter connected, the target current draw is 
 ideally 4.75 amps.
-- Optionally, you may reenter the setup menus at any time by power cycling the board, and pressing both buttons during the 
+- You may reenter the setup menus at any time by power cycling the board, and pressing both buttons during the 
 logo display.
 
 ### Serial Commands
@@ -50,7 +55,7 @@ the heated area).
 - 'e' Run the evaluate_heat() routine
 - 't' Print current temperature reading(s) of the LMT85 and the optional DS18B20Z.
 
-### Conclusion
+## Conclusion
 I can't say that I am happy with my purchace of this item. I spent numerous hours attempting to make it usable; But if 
 you find yourself in the same situation as I, this should at least make the product functional.
 

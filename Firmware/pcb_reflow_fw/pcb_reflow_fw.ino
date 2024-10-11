@@ -190,6 +190,7 @@ float error_I = 0;
 // Optional temperature sensor
 OneWire           oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
+DeviceAddress     Temp3;
 
 // LMT85
 #define USE_NEW_GETTEMP
@@ -199,7 +200,7 @@ DallasTemperature sensors(&oneWire);
 LMT85 lmt85(TEMP_PIN, VOLTAGE_REFERENCE);
 #endif
 
-//#define DEBUG
+// #define DEBUG
 
 #ifdef DEBUG
 #define debugprint(x) Serial.print(x);
@@ -316,6 +317,8 @@ inline void setupSensors() {
   sensors.begin();
   debugprint("Looking for sensors, found: ");
   debugprintln(sensors.getDeviceCount());
+  sensors.getAddress(Temp3, 0);
+  sensors.setResolution(Temp3, 9);
 }
 
 inline void setFastPwm() {
@@ -983,7 +986,9 @@ void completed() {
 
 float       getTemp() {
 #if defined USE_NEW_GETTEMP
-  return lmt85.getTempC();
+  float fTemp(lmt85.getTempC());
+  float fEstimatedTemp(fTemp * ANALOG_APPROXIMATION_SCALAR + ANALOG_APPROXIMATION_OFFSET);
+  return ((fTemp + ANALOG_APPROXIMATION_OFFSET) > 5.0) ? max(fTemp, fEstimatedTemp) : fTemp;
 #else
   debugprint("Temps: ");
   float t = 0;
@@ -1056,18 +1061,19 @@ uint8_t ConstrainCurrent(uint8_t uPWM) {
   if (uPWM >= MOSFET_PIN_OFF) {
     maxVolts = getVolts();
     constraint = uPWMConstraint;
-  } else if (last >= 100) {
-    const float minVolts(MAX_AMPERAGE * bed_resistance);
-    float       Volts(getVolts());
+  } else if (last >= 10) {
+    const float Volts(getVolts());
 
-    if (last > (5 * 60 * 1000)) {
+    if (last > (60 * 1000)) {
       maxVolts = 0;
       constraint = uPWMConstraint;
     }
     maxVolts = max(maxVolts, Volts);
-    if (Volts < minVolts + 1) {
+    if (Volts < maxVolts - 1) {
+      debugprintln("Decreasing Duty Cycle Volts = " + String(Volts) + " / " + String(maxVolts));
       constraint++;
-    } else if (Volts + 1 >= maxVolts) {
+    } else if (Volts + 0.5 >= maxVolts && constraint > uPWMConstraint) {
+      debugprintln("Increasing Duty Cycle Volts = " + String(Volts) + " / " + String(maxVolts));
       constraint--;
     }
     last = 0;
@@ -1104,10 +1110,9 @@ void        PrintTemperatureMapCSV(void) {
   if (sensors.getDeviceCount()) {
     sensors.requestTemperatures();
     if (sensors.getTempCByIndex(0) != DEVICE_DISCONNECTED_C) {
-      int         iPWM(uPWMConstraint + 50);
-      float       maxVolts(getVolts());
-      const float minVolts(MAX_AMPERAGE * bed_resistance);
-      uint8_t     constraint(iPWM);
+      int           iPWM(uPWMConstraint + 5);
+      int           iPWMLast(iPWM);
+      elapsedMillis Interval(0);
 
       Serial.println("PWM Value, LMT85 Temperature, DS18B20 Temperature, Temperature Scalar");
       analogWrite(MOSFET_PIN, iPWM);
@@ -1115,24 +1120,33 @@ void        PrintTemperatureMapCSV(void) {
       digitalWrite(LED_RED_PIN, HIGH);
 
       for (elapsedSeconds duration(0); duration < 5 * 60;) {
-        for (int iStep(0); iStep < 10; iStep++) {
-          delay(100);
-          iPWM = ConstrainCurrent(iPWM);
-          analogWrite(MOSFET_PIN, iPWM);
+        if (getButtonsState() != BUTTONS_NO_PRESS) {
+          break;
         }
 
-        float fLMT85Temp(lmt85.getTempC());
-        sensors.requestTemperatures();
-        float fDS18B20Temp(sensors.getTempCByIndex(0));
+        int iPWMConstrained(ConstrainCurrent(iPWM));
 
-        Serial.println(
-          String(iPWM) + ","
-          + String(fLMT85Temp) + ","
-          + String(fDS18B20Temp) + ","
-          + String(fDS18B20Temp / fLMT85Temp));
+        if (iPWMConstrained != iPWMLast) {
+          analogWrite(MOSFET_PIN, iPWMConstrained);
+          iPWMLast = iPWMConstrained;
+        }
 
-        if (fDS18B20Temp >= 125.0) {  // Limit of DS18B20
-          break;
+        if (Interval >= 100) {
+          float fLMT85Temp(lmt85.getTempC());
+          sensors.requestTemperatures();
+          float fDS18B20Temp(sensors.getTempC(Temp3));
+
+          Serial.println(
+            String(iPWM) + ","
+            + String(fLMT85Temp) + ","
+            + String(fDS18B20Temp) + ","
+            + String(fDS18B20Temp / fLMT85Temp));
+
+          if (fDS18B20Temp >= 125.0) {  // Limit of DS18B20
+            break;
+          }
+          Interval = 0;
+          iPWM = constrain(iPWM - 1, uPWMConstraint, MOSFET_PIN_OFF - 1);
         }
       }
       PCBReflowOff();
