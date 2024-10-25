@@ -58,6 +58,9 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);  // Create Dis
 
 #define MOSFET_PIN_OFF 255
 
+// Use alternate getTemp()
+#define USE_NEW_GETTEMP
+
 enum menu_state_t { MENU_IDLE,
                     MENU_SELECT_PROFILE,
                     MENU_HEAT,
@@ -193,7 +196,6 @@ DallasTemperature sensors(&oneWire);
 DeviceAddress     Temp3;
 
 // LMT85
-#define USE_NEW_GETTEMP
 #if defined USE_NEW_GETTEMP
 #include "LMT85.h"
 
@@ -986,9 +988,10 @@ void completed() {
 
 float       getTemp() {
 #if defined USE_NEW_GETTEMP
-  float fTemp(lmt85.getTempC());
-  float fEstimatedTemp(fTemp * ANALOG_APPROXIMATION_SCALAR + ANALOG_APPROXIMATION_OFFSET);
-  return ((fTemp + ANALOG_APPROXIMATION_OFFSET) > 5.0) ? max(fTemp, fEstimatedTemp) : fTemp;
+  float fTempC(lmt85.getTempC());
+  float fScaledTempC(fTempC + ((fTempC + ANALOG_APPROXIMATION_OFFSET) * ANALOG_APPROXIMATION_SCALAR));
+
+  return max(fTempC, fScaledTempC);
 #else
   debugprint("Temps: ");
   float t = 0;
