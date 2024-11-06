@@ -47,7 +47,7 @@ ideally 4.75 amps.
 logo display.
 
 ### Serial Commands
-This software supports three serial debugging commands:
+This software supports the following serial debugging commands:
 - 'c' Create a CSV file of temperature readings across the temperature range of the DS18B20Z (Limited to 125C). 
 If you place the DS18B20Z temperature probe on the center of the PCB, you can use this to measure the temperature 
 difference between the plate temperature and the indicated temperature from the LMT85 (which is locate along side 
