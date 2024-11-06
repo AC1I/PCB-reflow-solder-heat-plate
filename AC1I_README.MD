@@ -52,6 +52,7 @@ This software supports three serial debugging commands:
 If you place the DS18B20Z temperature probe on the center of the PCB, you can use this to measure the temperature 
 difference between the plate temperature and the indicated temperature from the LMT85 (which is locate along side 
 the heated area).
+- 'd' Toggle output of debug print messages.
 - 'e' Run the evaluate_heat() routine
 - 't' Print current temperature reading(s) of the LMT85 and the optional DS18B20Z.
 
