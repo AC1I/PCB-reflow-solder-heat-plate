@@ -94,6 +94,10 @@ uint8_t uPWMConstraint(2);  // Maximum duty cycle to manage current to design li
 // See the jupyter notebooks for more detail
 #define ANALOG_APPROXIMATION_SCALAR 1.612
 #define ANALOG_APPROXIMATION_OFFSET -20.517
+#if defined USE_NEW_GETTEMP
+#undef ANALOG_APPROXIMATION_SCALAR
+#define ANALOG_APPROXIMATION_SCALAR 2.506
+#endif
 
 // EEPROM storage locations
 #define STORAGE_VER 2
@@ -202,15 +206,19 @@ DeviceAddress     Temp3;
 LMT85 lmt85(TEMP_PIN, VOLTAGE_REFERENCE);
 #endif
 
-// #define DEBUG
-
-#ifdef DEBUG
-#define debugprint(x) Serial.print(x);
-#define debugprintln(x) Serial.println(x);
-#else
-#define debugprint(x)
-#define debugprintln(x)
-#endif
+bool DebugPrintOn(false);
+template<typename T>
+void debugprint(T x) {
+  if (DebugPrintOn) {
+    Serial.print(x);
+  }
+}
+template<typename T>
+void debugprintln(T x) {
+  if (DebugPrintOn) {
+    Serial.println(x);
+  }
+}
 
 // -------------------- Function prototypes -----------------------------------
 void inline heatAnimate(int &x, int &y, float v, float t, float target_temp);
@@ -1092,6 +1100,11 @@ void KeyboardHandler(void) {
       PrintTemperatureMapCSV();
       break;
 
+    case 'd':
+    case 'D':
+      DebugPrintOn = !DebugPrintOn;
+      break;
+
     case 'e':
     case 'E':
       evaluate_heat();
@@ -1104,6 +1117,11 @@ void KeyboardHandler(void) {
 
     default:
       Serial.println("Unknown command");
+      Serial.println();
+      Serial.println("c - Print Temperature Map CSV");
+      Serial.println("d - Toggle Debug output");
+      Serial.println("e - Evaluate heat");
+      Serial.println("t - Print Current Temperature");
       break;
   }
 }

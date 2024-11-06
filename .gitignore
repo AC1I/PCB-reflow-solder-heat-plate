@@ -31,3 +31,7 @@ fp-info-cache
 # Fritzing Project Files
 *.fzz
 
+# Backup files and reference files
+**/Heatplate_v1.1-backups/
+**/Debug Adapter-backups/
+**/Data Sheets
